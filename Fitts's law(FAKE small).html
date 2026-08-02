@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>フィッツの法則 追実験プログラム</title>
+<style>
+  :root{
+    --bg:#10151c;
+    --panel:#1a2230;
+    --line:#2a3444;
+    --text:#e7ecf3;
+    --muted:#8b97a8;
+    --accent:#3ac0a0;
+    --target:#e0453f;
+    --decoy:#3b82f6;
+  }
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0;padding:0;height:100%;
+    background:var(--bg);
+    color:var(--text);
+    font-family:"Helvetica Neue",Arial,"Hiragino Kaku Gothic ProN","Yu Gothic",sans-serif;
+    overflow:hidden;
+  }
+  #header{
+    position:fixed;top:0;left:0;right:0;
+    display:flex;justify-content:space-between;align-items:center;
+    padding:14px 22px;
+    background:var(--panel);
+    border-bottom:1px solid var(--line);
+    font-size:13px;
+    letter-spacing:.03em;
+    z-index:10;
+  }
+  #header .title{font-weight:600;color:var(--text);}
+  #header .status{color:var(--muted);font-variant-numeric:tabular-nums;}
+  #arena{
+    position:absolute;
+    top:52px;left:0;right:0;bottom:0;
+    background-image:radial-gradient(var(--line) 1px, transparent 1px);
+    background-size:28px 28px;
+  }
+  .btn{
+    position:absolute;
+    transform:translate(-50%,-50%);
+    display:flex;align-items:center;justify-content:center;
+    border-radius:10px;
+    cursor:pointer;
+    user-select:none;
+    font-size:15px;
+    font-weight:600;
+    color:#fff;
+    border:none;
+    box-shadow:0 2px 10px rgba(0,0,0,.35);
+  }
+  #startBtn{
+    width:150px;height:56px;
+    background:var(--accent);
+  }
+  #startBtn:active{filter:brightness(.9);}
+  #targetBtn{
+    background:var(--target);
+    box-shadow:0 0 0 4px rgba(224,69,63,.18), 0 2px 10px rgba(0,0,0,.35);
+  }
+  #targetBtn:active{filter:brightness(.9);}
+  #decoyBtn{
+    background:var(--decoy);
+    box-shadow:0 0 0 4px rgba(59,130,246,.18), 0 2px 10px rgba(0,0,0,.35);
+    cursor:pointer;
+  }
+  #centerMark{
+    position:absolute;
+    width:6px;height:6px;
+    border-radius:50%;
+    background:var(--muted);
+    transform:translate(-50%,-50%);
+  }
+  #resultScreen{
+    position:absolute;top:52px;left:0;right:0;bottom:0;
+    display:none;
+    align-items:center;justify-content:center;
+    padding:40px;
+  }
+  #resultScreen.show{display:flex;}
+  #resultBox{
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:14px;
+    padding:32px 40px;
+    max-width:560px;
+    width:100%;
+  }
+  #resultBox h2{
+    margin:0 0 4px;
+    font-size:18px;
+  }
+  #resultBox p.sub{
+    margin:0 0 20px;
+    color:var(--muted);
+    font-size:13px;
+  }
+  table{
+    width:100%;
+    border-collapse:collapse;
+    font-size:14px;
+    font-variant-numeric:tabular-nums;
+  }
+  th,td{
+    padding:9px 8px;
+    text-align:right;
+    border-bottom:1px solid var(--line);
+  }
+  th:first-child,td:first-child{text-align:left;}
+  th{
+    color:var(--muted);
+    font-weight:500;
+    font-size:12px;
+  }
+  #restartBtn{
+    margin-top:24px;
+    width:100%;
+    padding:12px;
+    background:var(--accent);
+    border:none;
+    border-radius:8px;
+    color:#fff;
+    font-size:14px;
+    font-weight:600;
+    cursor:pointer;
+  }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <span class="title">フィッツの法則 追実験</span>
+  <span class="status" id="statusText">試行 0 / 5</span>
+</div>
+
+<div id="arena"></div>
+
+<div id="resultScreen">
+  <div id="resultBox">
+    <h2>実験結果</h2>
+    <p class="sub">全5試行の計測データ（ID = log2(1 + D / W)）</p>
+    <table>
+      <thead>
+        <tr><th>試行</th><th>D [px]</th><th>W [px]</th><th>ID</th><th>T [s]</th></tr>
+      </thead>
+      <tbody id="resultBody"></tbody>
+    </table>
+    <button id="restartBtn">もう一度実験する</button>
+  </div>
+</div>
+
+<script>
+(function(){
+  // ===== 実験パラメータ =====
+  const W = 20;          // 正方形のサイズ（一定）[px]
+  const D_MIN = 100;      // 距離Dの最小値 [px]
+  const D_MAX = 500;      // 距離Dの最大値 [px]
+  const TOTAL_TRIALS = 5; // 試行回数
+  const MARGIN = 10;      // 画面端からの安全マージン [px]
+
+  const arena = document.getElementById('arena');
+  const statusText = document.getElementById('statusText');
+  const resultScreen = document.getElementById('resultScreen');
+  const resultBody = document.getElementById('resultBody');
+
+  let trial = 0;
+  let results = [];       // {D, W, T}
+  let startTime = 0;
+  let centerX = 0, centerY = 0;
+
+  function arenaRect(){
+    return arena.getBoundingClientRect();
+  }
+
+  function clearArena(){
+    arena.innerHTML = '';
+  }
+
+  // 中央にスタート（または「続ける」）ボタンを表示
+  function showStartButton(){
+    clearArena();
+    const rect = arenaRect();
+    centerX = rect.width / 2;
+    centerY = rect.height / 2;
+
+    const btn = document.createElement('button');
+    btn.id = 'startBtn';
+    btn.className = 'btn';
+    btn.style.left = centerX + 'px';
+    btn.style.top = centerY + 'px';
+    btn.textContent = (trial === 0) ? 'スタート' : '次の試行へ';
+    btn.addEventListener('click', onStartClick);
+    arena.appendChild(btn);
+
+    statusText.textContent = '試行 ' + trial + ' / ' + TOTAL_TRIALS;
+  }
+
+  // 距離Dの位置に置いても画面内に収まるかを判定
+  function inBounds(x, y, rect){
+    return (
+      x >= W/2 + MARGIN && x <= rect.width  - W/2 - MARGIN &&
+      y >= W/2 + MARGIN && y <= rect.height - W/2 - MARGIN
+    );
+  }
+
+  // 距離Dはそのままに、ランダムな角度で画面内に収まる座標を1つ求める
+  function randomPointAtDistance(D, rect){
+    let x, y, angle, attempts = 0;
+    do {
+      angle = Math.random() * 2 * Math.PI;
+      x = centerX + D * Math.cos(angle);
+      y = centerY + D * Math.sin(angle);
+      attempts++;
+    } while (!inBounds(x, y, rect) && attempts < 500);
+    return { x: x, y: y };
+  }
+
+  // ランダムな D（距離）を決め、同じDの位置に赤(本物)・青(フェイク)の正方形を配置
+  function placeTarget(){
+    const rect = arenaRect();
+    const D = D_MIN + Math.random() * (D_MAX - D_MIN);
+
+    const red = randomPointAtDistance(D, rect);
+
+    // 青は赤と重ならない位置になるまで再抽選（同じDのまま角度だけ変える）
+    let blue, attempts = 0;
+    const minSeparation = W + MARGIN;
+    do {
+      blue = randomPointAtDistance(D, rect);
+      attempts++;
+    } while (
+      Math.hypot(blue.x - red.x, blue.y - red.y) < minSeparation &&
+      attempts < 500
+    );
+
+    clearArena();
+
+    // 青色（フェイク）を先に配置
+    const decoy = document.createElement('div');
+    decoy.id = 'decoyBtn';
+    decoy.className = 'btn';
+    decoy.style.left = blue.x + 'px';
+    decoy.style.top = blue.y + 'px';
+    decoy.style.width = W + 'px';
+    decoy.style.height = W + 'px';
+    decoy.addEventListener('pointerdown', function(e){ e.preventDefault(); });
+    arena.appendChild(decoy);
+
+    // 赤色（本物）を配置
+    const target = document.createElement('div');
+    target.id = 'targetBtn';
+    target.className = 'btn';
+    target.style.left = red.x + 'px';
+    target.style.top = red.y + 'px';
+    target.style.width = W + 'px';
+    target.style.height = W + 'px';
+    target.addEventListener('pointerdown', function(e){ e.preventDefault(); onTargetClick(D); });
+    arena.appendChild(target);
+
+    startTime = performance.now();
+  }
+
+  function onStartClick(){
+    trial++;
+    placeTarget();
+  }
+
+  function onTargetClick(D){
+    const T = (performance.now() - startTime) / 1000; // 秒
+    results.push({ D: D, W: W, T: T });
+
+    if (trial < TOTAL_TRIALS){
+      showStartButton();
+    } else {
+      showResults();
+    }
+  }
+
+  function showResults(){
+    clearArena();
+    resultBody.innerHTML = '';
+    results.forEach(function(r, i){
+      const ID = Math.log2(1 + r.D / r.W);
+      const tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td>' + (i+1) + '</td>' +
+        '<td>' + r.D.toFixed(1) + '</td>' +
+        '<td>' + r.W.toFixed(0) + '</td>' +
+        '<td>' + ID.toFixed(3) + '</td>' +
+        '<td>' + r.T.toFixed(3) + '</td>';
+      resultBody.appendChild(tr);
+    });
+    resultScreen.classList.add('show');
+    statusText.textContent = '試行 ' + TOTAL_TRIALS + ' / ' + TOTAL_TRIALS + '（終了）';
+  }
+
+  document.getElementById('restartBtn').addEventListener('click', function(){
+    trial = 0;
+    results = [];
+    resultScreen.classList.remove('show');
+    showStartButton();
+  });
+
+  window.addEventListener('load', showStartButton);
+  window.addEventListener('resize', function(){
+    if (!resultScreen.classList.contains('show') && arena.children.length &&
+        arena.children[0].id === 'startBtn'){
+      showStartButton();
+    }
+  });
+})();
+</script>
+
+</body>
+</html>
